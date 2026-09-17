@@ -1,0 +1,6 @@
+{
+  "name": "KAUTILYA PROTOCOL - Criminal Network Analysis",
+  "description": "AI and Blockchain-powered multi-agency criminal network analysis platform by NETRA 404 for National Crime Records Bureau (NCRB) and Rashtriya Raksha University (RRU) SITAICS.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
