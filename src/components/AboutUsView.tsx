@@ -1,6 +1,5 @@
 import React from "react";
 import { Shield, Eye, Database, Cpu, Award, BookOpen, CheckCircle, ExternalLink, Network } from "lucide-react";
-import { NetraLogo, RruShieldLogo, SitaicsCircularLogo } from "./Logos";
 
 export const AboutUsView: React.FC<{ onBackToHome: () => void }> = ({ onBackToHome }) => {
   return (
@@ -25,48 +24,17 @@ export const AboutUsView: React.FC<{ onBackToHome: () => void }> = ({ onBackToHo
           </p>
         </div>
 
-        {/* Institutional Collaboration Banner */}
-        <div className="bg-white rounded-3xl border border-slate-200 shadow-md p-6 sm:p-8 mb-10 flex flex-col md:flex-row items-center justify-around gap-6">
-          <div className="flex items-center gap-4 text-center sm:text-left">
-            <RruShieldLogo className="h-16 w-auto" />
-            <div>
-              <h4 className="font-extrabold text-sm sm:text-base text-slate-900">
-                Rashtriya Raksha University
-              </h4>
-              <p className="text-xs text-slate-500">
-                An Institution of National Importance, Ministry of Home Affairs, Govt. of India
-              </p>
-            </div>
-          </div>
-
-          <div className="hidden md:block h-12 w-px bg-slate-200" />
-
-          <div className="flex items-center gap-4 text-center sm:text-left">
-            <SitaicsCircularLogo className="h-16 w-auto" />
-            <div>
-              <h4 className="font-extrabold text-sm sm:text-base text-slate-900">
-                SITAICS
-              </h4>
-              <p className="text-xs text-slate-500">
-                School of Information Technology, Artificial Intelligence & Cyber Security
-              </p>
-            </div>
-          </div>
-
-          <div className="hidden md:block h-12 w-px bg-slate-200" />
-
-          <div className="flex items-center gap-3 text-center sm:text-left">
-            <div className="p-3 rounded-2xl bg-orange-50 border border-orange-200">
-              <Shield className="w-8 h-8 text-orange-600" />
-            </div>
-            <div>
-              <h4 className="font-extrabold text-sm sm:text-base text-slate-900">
-                NCRB - Women Safety
-              </h4>
-              <p className="text-xs text-slate-500">
-                National Crime Records Bureau, Ministry of Home Affairs
-              </p>
-            </div>
+        {/* Team NETRA-404 Image Section */}
+        <div className="mb-10">
+          <h2 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-slate-900 text-center mb-6">
+            Team NETRA-404
+          </h2>
+          <div className="overflow-hidden rounded-3xl border border-slate-200 shadow-md bg-white">
+            <img
+              src="/us.jpg"
+              alt="Team NETRA-404"
+              className="w-full h-[420px] object-cover object-center"
+            />
           </div>
         </div>
 
