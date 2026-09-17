@@ -291,8 +291,8 @@ export default function App() {
       {/* ========================================================================= */}
       {/* 1. TOP HEADER - STARK TACTICAL FLIGHT DECK / CEREBRO COMMAND CONSOLE      */}
       {/* ========================================================================= */}
-      <header className="w-full bg-slate-950/80 backdrop-blur-xl border-b border-cyan-500/25 shrink-0 z-30 shadow-[0_4px_30px_rgba(0,240,255,0.08)] relative">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-20 flex items-center justify-between">
+      <header className="w-full bg-slate-950/80 backdrop-blur-xl border-b border-cyan-500/25 shrink-0 z-[1000] shadow-[0_4px_30px_rgba(0,240,255,0.08)] relative">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-20 flex items-center justify-between relative">
           {/* Left: Team NETRA 404 Logo with Arc-Reactor Glow */}
           <div
             onClick={() => setCurrentView("home")}
@@ -308,11 +308,11 @@ export default function App() {
           </div>
 
           {/* Center: Project Name & Sanskrit Motto with Holographic Illumination */}
-          <div className="text-center px-2 flex flex-col items-center justify-center">
+          <div className="absolute left-1/2 -translate-x-1/2 text-center px-2 flex flex-col items-center justify-center">
             <div className="flex items-center gap-2">
               <span className="text-cyan-400 font-mono text-[10px] hidden md:inline opacity-70">[</span>
               <h1 className="text-xl sm:text-2xl md:text-[27px] font-black tracking-[0.22em] text-transparent bg-clip-text bg-gradient-to-b from-white via-cyan-100 to-cyan-400 uppercase font-serif-official drop-shadow-[0_0_15px_rgba(0,240,255,0.4)]">
-                KAUTILYA PROTOCOL
+                THE KAUTILYA PROTOCOL
               </h1>
               <span className="text-cyan-400 font-mono text-[10px] hidden md:inline opacity-70">]</span>
             </div>
@@ -321,16 +321,7 @@ export default function App() {
             </p>
             <div className="hidden sm:flex items-center gap-2 text-[9px] font-mono text-cyan-400/80 uppercase tracking-widest mt-1">
               <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping" />
-              <span>DEFENCE &amp; INTEL VIGILANCE // CEREBRO LINK: 99.8% // STATUS: OPTIMAL</span>
-            </div>
-          </div>
-
-          {/* Right: Institutional Logos (RRU & SITAICS) in Cyber Holographic Bezels */}
-          <div className="flex items-center gap-2 sm:gap-3 select-none">
-            <div className="p-1 sm:p-1.5 rounded-2xl bg-slate-900/85 border border-cyan-500/30 shadow-[0_0_15px_rgba(0,240,255,0.15)] flex items-center gap-2 sm:gap-3 backdrop-blur-md">
-              <RruShieldLogo className="h-12 sm:h-14 w-auto" />
-              <div className="h-8 w-px bg-cyan-500/30" />
-              <SitaicsCircularLogo className="h-12 sm:h-14 w-auto" />
+              <span>In relationships lies the mystery, in analysis lies the truth</span>
             </div>
           </div>
         </div>
@@ -341,7 +332,7 @@ export default function App() {
         {/* ========================================================================= */}
         {/* 2. SUB-NAVIGATION BAR (HACKER HUD STYLING WITH ACTIVE STATES & DROPDOWNS) */}
         {/* ========================================================================= */}
-        <div ref={dropdownRef} className="bg-slate-950/75 border-b border-cyan-500/20 backdrop-blur-lg">
+        <div ref={dropdownRef} className="relative z-[1001] bg-slate-950/75 border-b border-cyan-500/20 backdrop-blur-lg">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-12 flex items-center justify-between">
             {/* Nav Links */}
             <nav className="flex items-center gap-1 sm:gap-2 h-full text-xs font-bold text-slate-300">

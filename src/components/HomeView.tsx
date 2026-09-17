@@ -193,9 +193,6 @@ export const HomeView: React.FC<HomeViewProps> = ({
                   <Zap className="w-3 h-3 text-cyan-400" />
                   <span>DEFENCE &amp; INTEL VIGILANCE UNIT</span>
                 </span>
-                <span className="text-[10px] sm:text-[11px] text-cyan-400/70 font-semibold mt-0.5 font-hindi tracking-wider">
-                  राष्ट्रीय रक्षा विश्वविद्यालय • SITAICS
-                </span>
               </div>
             </div>
           </div>
@@ -204,7 +201,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
           <div className="mt-3 flex items-center gap-2">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
             <p className="text-xs sm:text-sm font-semibold text-cyan-200/90 tracking-wide font-hindi drop-shadow-[0_0_6px_rgba(0,240,255,0.3)]">
-              संबंधेषु रहस्यं, विश्लेषणे सत्यं। (National Security is Supreme)
+              संबंधेषु रहस्यं, विश्लेषणे सत्यं। (In relationships lies the mystery, in analysis lies the truth)
             </p>
           </div>
         </div>

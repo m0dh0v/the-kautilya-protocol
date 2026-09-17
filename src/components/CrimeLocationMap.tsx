@@ -1,5 +1,5 @@
 import { useEffect, useMemo } from "react";
-import { MapContainer, TileLayer, Marker, Popup, Polyline, LayersControl, LayerGroup, AttributionControl, useMap } from "react-leaflet";
+import { MapContainer, TileLayer, Marker, Popup, Polyline, Polygon, LayersControl, LayerGroup, AttributionControl, useMap } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import type { Entity } from "../types/intelligence";
@@ -64,6 +64,24 @@ function haversineDistanceKm(lat1: number, lon1: number, lat2: number, lon2: num
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
+function criticalityColor(level: string | undefined): string {
+  if (level === "critical") return "#ef4444";
+  if (level === "high") return "#f97316";
+  if (level === "medium") return "#facc15";
+  return "#22d3ee";
+}
+
+function criticalityPolygon(entity: Entity): [number, number][] {
+  const radiusByLevel: Record<string, number> = { critical: 0.55, high: 0.4, medium: 0.28, low: 0.18 };
+  const radius = radiusByLevel[entity.attributes.criticality || entity.riskLevel] || 0.28;
+  const latitude = entity.latitude!;
+  const longitude = entity.longitude!;
+  return Array.from({ length: 12 }, (_, index) => {
+    const angle = (Math.PI / 6) * index;
+    return [latitude + Math.sin(angle) * radius, longitude + Math.cos(angle) * radius] as [number, number];
+  });
+}
+
 export default function CrimeLocationMap({ entities, heightClassName = "h-[520px]" }: CrimeLocationMapProps) {
   // Only entities that actually have coordinates can go on the map
   const located = useMemo(
@@ -81,6 +99,23 @@ export default function CrimeLocationMap({ entities, heightClassName = "h-[520px
   const crimeScenes = located.filter((e) => e.locationCategory === "crime_scene");
   const lastKnown = located.filter((e) => e.locationCategory === "last_known_location");
   const policeStations = located.filter((e) => e.locationCategory === "police_station");
+
+  const networkConnections = useMemo(() => {
+    const grouped = new Map<string, Entity[]>();
+    crimeScenes.forEach((site) => {
+      const network = site.attributes.associatedNetwork;
+      if (!network) return;
+      network.split("|").map((value) => value.trim()).filter(Boolean).forEach((key) => {
+        const sites = grouped.get(key) || [];
+        sites.push(site);
+        grouped.set(key, sites);
+      });
+    });
+
+    return Array.from(grouped.entries()).flatMap(([network, sites]) =>
+      sites.slice(1).map((site, index) => ({ network, from: sites[index], to: site }))
+    );
+  }, [crimeScenes]);
 
   // For every crime scene / last-known point, auto-find the nearest police station
   // and build a connecting line to it — no manual linking required.
@@ -126,13 +161,16 @@ export default function CrimeLocationMap({ entities, heightClassName = "h-[520px
       <div className="pointer-events-none absolute inset-0 z-[500] shadow-[inset_0_0_90px_rgba(2,6,23,0.72)]" />
       <div className="absolute left-5 top-5 z-[501] border-l-2 border-cyan-400 bg-slate-950/85 px-4 py-3 font-mono text-[10px] uppercase tracking-[0.16em] text-cyan-100 shadow-xl backdrop-blur-md">
         <div className="flex items-center gap-2"><span className="h-2 w-2 animate-pulse rounded-full bg-emerald-400" /> Crime Map // Station View</div>
-        <div className="mt-1 text-[9px] tracking-wider text-slate-400">{located.length} locations / {connections.length} station links</div>
+        <div className="mt-1 text-[9px] tracking-wider text-slate-400">{located.length} locations / {connections.length} station links / {networkConnections.length} network links</div>
         {located.length === 0 && <div className="mt-2 max-w-[220px] normal-case tracking-normal text-amber-300">Live records have no latitude/longitude fields.</div>}
       </div>
       <div className="absolute bottom-5 left-5 z-[501] flex flex-wrap gap-3 border-l-2 border-cyan-400 bg-slate-950/80 px-3 py-2 font-mono text-[9px] uppercase tracking-wider text-slate-200 backdrop-blur-md">
         {Object.entries(CATEGORY_LABELS).map(([category, label]) => (
           <span key={category} className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full" style={{ background: CATEGORY_COLORS[category], boxShadow: `0 0 8px ${CATEGORY_COLORS[category]}` }} />{label}</span>
         ))}
+        <span className="flex items-center gap-1.5"><span className="h-2 w-2 border border-red-400 bg-red-400/20" />Operational Perimeter</span>
+        <span className="flex items-center gap-1.5"><span className="h-0.5 w-4 bg-cyan-400" />Nearest Station</span>
+        <span className="flex items-center gap-1.5"><span className="h-0.5 w-4 bg-violet-400" />Same Network</span>
       </div>
       <MapContainer center={[28.6139, 77.209]} zoom={5} zoomControl attributionControl={false} style={{ height: "100%", width: "100%", background: "#0b1120" }}>
         <AttributionControl prefix={false} position="bottomright" />
@@ -145,8 +183,32 @@ export default function CrimeLocationMap({ entities, heightClassName = "h-[520px
           </LayersControl.BaseLayer>
           <LayersControl.Overlay checked name="Investigation Routes">
             <LayerGroup>
-              {crimeToLastKnown.map((c, i) => <Polyline key={`cs-lk-${i}`} positions={[[c.from.latitude!, c.from.longitude!], [c.to.latitude!, c.to.longitude!]]} pathOptions={{ color: "#f97316", weight: 3, dashArray: "8 8", opacity: 0.9 }} />)}
-              {connections.map((c, i) => <Polyline key={`ps-${i}`} positions={[[c.from.latitude!, c.from.longitude!], [c.to.latitude!, c.to.longitude!]]} pathOptions={{ color: "#06b6d4", weight: 2.5, opacity: 0.9 }} />)}
+              {crimeToLastKnown.map((c, i) => <Polyline key={`cs-lk-${i}`} positions={[[c.from.latitude!, c.from.longitude!], [c.to.latitude!, c.to.longitude!]]} pathOptions={{ color: "#f97316", weight: 2, dashArray: "5 7", opacity: 0.75 }} />)}
+              {connections.map((c, i) => <Polyline key={`ps-${i}`} positions={[[c.from.latitude!, c.from.longitude!], [c.to.latitude!, c.to.longitude!]]} pathOptions={{ color: "#06b6d4", weight: 2, opacity: 0.9 }} />)}
+              {networkConnections.map((c, i) => <Polyline key={`network-${c.network}-${i}`} positions={[[c.from.latitude!, c.from.longitude!], [c.to.latitude!, c.to.longitude!]]} pathOptions={{ color: "#a78bfa", weight: 2, dashArray: "3 8", opacity: 0.9 }} />)}
+            </LayerGroup>
+          </LayersControl.Overlay>
+          <LayersControl.Overlay checked name="Formal Criticality Perimeters">
+            <LayerGroup>
+              {crimeScenes.map((site) => {
+                const level = site.attributes.criticality || site.riskLevel;
+                const color = criticalityColor(level);
+                return (
+                  <Polygon
+                    key={`criticality-${site.id}`}
+                    positions={criticalityPolygon(site)}
+                    pathOptions={{ color, fillColor: color, fillOpacity: 0.1, weight: 1.5, dashArray: "8 6", lineCap: "square", lineJoin: "miter" }}
+                  >
+                    <Popup>
+                      <strong>{site.name}</strong>
+                      <div style={{ fontSize: 12 }}>Criticality: {String(level).toUpperCase()}</div>
+                      <div style={{ fontSize: 12 }}>Casualties: {site.attributes.casualties ?? 0}</div>
+                      <div style={{ fontSize: 12 }}>Injuries: {site.attributes.injuries ?? 0}</div>
+                      <div style={{ fontSize: 12 }}>Network: {site.attributes.associatedNetwork || "Unattributed"}</div>
+                    </Popup>
+                  </Polygon>
+                );
+              })}
             </LayerGroup>
           </LayersControl.Overlay>
         </LayersControl>
@@ -166,6 +228,7 @@ export default function CrimeLocationMap({ entities, heightClassName = "h-[520px
                   {CATEGORY_LABELS[e.locationCategory || "other"]}
                 </div>
                 {e.attributes?.address && <div style={{ fontSize: 12 }}>{e.attributes.address}</div>}
+                {e.attributes?.associatedNetwork && <div style={{ fontSize: 12 }}>Network: {e.attributes.associatedNetwork}</div>}
               </div>
             </Popup>
           </Marker>

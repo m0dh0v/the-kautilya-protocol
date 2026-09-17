@@ -303,6 +303,11 @@ function buildBombDataGraph(docs: any[]): { nodes: any[]; links: any[] } {
   const nodeMap = new Map<string, any>();
   const links: any[] = [];
 
+  const numericValue = (value: any): number => {
+    const parsed = Number(String(value ?? "").replace(/[^0-9.-]/g, ""));
+    return Number.isFinite(parsed) ? parsed : 0;
+  };
+
   const addNode = (id: string, name: string, type: string, role: string, riskLevel: string, attributes: Record<string, any> = {}, confidenceScore = 0.9) => {
     if (!id || nodeMap.has(id)) return;
     nodeMap.set(id, {
@@ -342,6 +347,12 @@ function buildBombDataGraph(docs: any[]): { nodes: any[]; links: any[] } {
     const device = doc.DEVICE || doc.device || doc["DEVICE TYPE"] || "Unknown device";
     const explosive = doc.EXPLOSIVE || doc.explosive || doc["EXPLOSIVE TYPE"] || "Unknown explosive";
     const terroristGroup = doc["TERRORIST GP"] || doc.terroristGroup || doc.terrorist || "Unknown group";
+    const associatedNetwork = doc.PERSON || doc.person || doc.PERPETRATOR || doc.perpetrator || terroristGroup;
+    const latitude = numericValue(doc.LATITUDE || doc.latitude);
+    const longitude = numericValue(doc.LONGITUDE || doc.longitude);
+    const casualties = numericValue(doc["SF KILLED"]) + numericValue(doc["CIV KILLED"]);
+    const injuries = numericValue(doc["SF INJURED"]) + numericValue(doc["CIV INJURED"]);
+    const criticality = casualties >= 10 || injuries >= 50 ? "critical" : casualties > 0 || injuries > 0 ? "high" : "medium";
 
     addNode(eventId, eventLabel, "event", "Explosive Attack", "critical", {
       caseId,
@@ -354,7 +365,29 @@ function buildBombDataGraph(docs: any[]): { nodes: any[]; links: any[] } {
     }, 0.98);
 
     const locationId = `location_${slugify(place)}`;
-    addNode(locationId, place, "location", "Blast Site", "high", { district, state, latitude: doc.LATITUDE || doc.latitude, longitude: doc.LONGITUDE || doc.longitude }, 0.94);
+    addNode(locationId, place, "location", "Blast Site", criticality, {
+      district,
+      state,
+      latitude,
+      longitude,
+      criticality,
+      casualties,
+      injuries,
+      associatedNetwork,
+      source: sourceLabel,
+    }, 0.94);
+    const locationNode = nodeMap.get(locationId);
+    if (locationNode) {
+      const previousNetwork = locationNode.attributes.associatedNetwork;
+      locationNode.attributes.associatedNetwork = Array.from(
+        new Set([previousNetwork, associatedNetwork].filter((value) => value && value !== "Unknown group"))
+      ).join(" | ");
+    }
+    if (locationNode && latitude !== 0 && longitude !== 0) {
+      locationNode.latitude = latitude;
+      locationNode.longitude = longitude;
+      locationNode.locationCategory = "crime_scene";
+    }
     addLink(eventId, locationId, "occurred_at", `Bomb incident recorded at ${place}.`, 9, 0.97);
 
     if (targetValue) {
@@ -398,7 +431,59 @@ export async function fetchLiveGraphData(): Promise<{ nodes: any[]; links: any[]
     };
   }
 
-  // 2. Try Neo4j directly over tunnel or cloud
+  // 2. Prefer MongoDB Atlas data, since this project uses Atlas as the source of truth.
+  const db = await getMongoDb();
+  if (db) {
+    try {
+      const rawNodes = await db.collection("entities").find({}).toArray();
+      const rawLinks = await db.collection("relationships").find({}).toArray();
+
+      const nodes = rawNodes.map((n) => ({
+          id: n.id || String(n._id),
+          name: n.name,
+          type: n.type || "person",
+          role: n.role || "Target",
+          riskLevel: n.riskLevel || "medium",
+          attributes: n.attributes || {},
+          confidenceScore: n.confidenceScore || 0.9,
+      }));
+
+      const links = rawLinks.map((l) => ({
+          id: l.id || String(l._id),
+          source: l.source,
+          target: l.target,
+          relationshipType: l.relationshipType || "associated_with",
+          evidenceSummary: l.evidenceSummary || "Database recorded link",
+          amount: l.amount,
+          frequency: l.frequency,
+          weight: l.weight || 3,
+      }));
+
+      const bombCollection = "Bomb Data";
+      try {
+        const bombDocs = await db.collection(bombCollection).find({}).toArray();
+        if (bombDocs.length > 0) {
+          const bombGraph = buildBombDataGraph(bombDocs);
+          nodes.push(...bombGraph.nodes);
+          links.push(...bombGraph.links);
+        }
+      } catch {
+        // Collection not found in this Atlas database; continue to Neo4j fallback.
+      }
+
+      if (nodes.length > 0) {
+        return {
+          nodes,
+          links,
+          source: "mongodb_atlas_live",
+        };
+      }
+    } catch (err: any) {
+      console.warn("Error querying MongoDB live graph:", err.message);
+    }
+  }
+
+  // 3. Fall back to Neo4j if Atlas is empty or unavailable.
   const neoDriver = getNeo4jDriver();
   if (neoDriver) {
     try {
@@ -464,65 +549,6 @@ export async function fetchLiveGraphData(): Promise<{ nodes: any[]; links: any[]
       }
     } catch (err: any) {
       console.warn("Error querying Neo4j live graph:", err.message);
-    }
-  }
-
-  // 2. Try MongoDB Atlas next
-  const db = await getMongoDb();
-  if (db) {
-    try {
-      const rawNodes = await db.collection("entities").find({}).toArray();
-      const rawLinks = await db.collection("relationships").find({}).toArray();
-
-      if (rawNodes.length > 0) {
-        const nodes = rawNodes.map((n) => ({
-          id: n.id || String(n._id),
-          name: n.name,
-          type: n.type || "person",
-          role: n.role || "Target",
-          riskLevel: n.riskLevel || "medium",
-          attributes: n.attributes || {},
-          confidenceScore: n.confidenceScore || 0.9,
-        }));
-
-        const links = rawLinks.map((l) => ({
-          id: l.id || String(l._id),
-          source: l.source,
-          target: l.target,
-          relationshipType: l.relationshipType || "associated_with",
-          evidenceSummary: l.evidenceSummary || "Database recorded link",
-          amount: l.amount,
-          frequency: l.frequency,
-          weight: l.weight || 3,
-        }));
-
-        return {
-          nodes,
-          links,
-          source: "mongodb_atlas_live",
-        };
-      }
-
-      const candidateCollections = ["Bomb Data", "BombData", "bomb_data", "bombdata", "bomb", "bomb_incidents"];
-      for (const name of candidateCollections) {
-        try {
-          const bombDocs = await db.collection(name).find({}).toArray();
-          if (bombDocs.length > 0) {
-            const bombGraph = buildBombDataGraph(bombDocs);
-            if (bombGraph.nodes.length > 0) {
-              return {
-                nodes: bombGraph.nodes,
-                links: bombGraph.links,
-                source: `mongodb_bomb_data_live:${name}`,
-              };
-            }
-          }
-        } catch {
-          // Skip collections that don't exist.
-        }
-      }
-    } catch (err: any) {
-      console.warn("Error querying MongoDB live graph:", err.message);
     }
   }
 
@@ -650,6 +676,12 @@ export async function syncAtlasToNeo4j(
   try {
     const nodes = await db.collection("entities").find({}).toArray();
     const links = await db.collection("relationships").find({}).toArray();
+    const bombDocs = await db.collection("Bomb Data").find({}).toArray();
+    if (bombDocs.length > 0) {
+      const bombGraph = buildBombDataGraph(bombDocs);
+      nodes.push(...bombGraph.nodes);
+      links.push(...bombGraph.links);
+    }
     const session = driver.session();
 
     try {
