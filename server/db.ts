@@ -291,6 +291,103 @@ export async function checkDatabasesStatus(): Promise<DatabaseStatus> {
 /**
  * Fetch Graph topology directly from Partner Bridge, Neo4j, or MongoDB
  */
+function slugify(value: string | undefined | null): string {
+  return String(value || "unknown")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_|_$/g, "")
+    .slice(0, 80) || "unknown";
+}
+
+function buildBombDataGraph(docs: any[]): { nodes: any[]; links: any[] } {
+  const nodeMap = new Map<string, any>();
+  const links: any[] = [];
+
+  const addNode = (id: string, name: string, type: string, role: string, riskLevel: string, attributes: Record<string, any> = {}, confidenceScore = 0.9) => {
+    if (!id || nodeMap.has(id)) return;
+    nodeMap.set(id, {
+      id,
+      name,
+      type,
+      role,
+      riskLevel,
+      attributes,
+      confidenceScore,
+    });
+  };
+
+  const addLink = (source: string, target: string, relationshipType: string, evidenceSummary: string, weight = 6, confidence = 0.9) => {
+    if (!source || !target || source === target) return;
+    links.push({
+      id: `rel_${source}_${target}_${relationshipType}_${links.length}`,
+      source,
+      target,
+      relationshipType,
+      evidenceSummary,
+      weight,
+      confidence,
+    });
+  };
+
+  docs.forEach((doc, index) => {
+    const caseId = doc.caseId || doc["CASE ID"] || `bomb_case_${index + 1}`;
+    const eventId = `bomb_event_${slugify(caseId)}_${index + 1}`;
+    const eventLabel = doc.title || doc.eventName || `Bomb Incident ${index + 1}`;
+    const place = doc.LOCATION || doc.location || doc.PLACE || doc.place || "Unknown location";
+    const district = doc.DISTRICT || doc.district || "Unknown district";
+    const state = doc.STATE || doc.state || "Unknown state";
+    const date = doc.DATE || doc.date || doc.timestamp || "Unknown date";
+    const sourceLabel = doc.SOURCE || doc.source || "Public intelligence source";
+    const targetValue = doc.TARGET || doc.target || doc["TARGET TYPE"] || "Unknown target";
+    const device = doc.DEVICE || doc.device || doc["DEVICE TYPE"] || "Unknown device";
+    const explosive = doc.EXPLOSIVE || doc.explosive || doc["EXPLOSIVE TYPE"] || "Unknown explosive";
+    const terroristGroup = doc["TERRORIST GP"] || doc.terroristGroup || doc.terrorist || "Unknown group";
+
+    addNode(eventId, eventLabel, "event", "Explosive Attack", "critical", {
+      caseId,
+      date,
+      location: place,
+      district,
+      state,
+      source: sourceLabel,
+      summary: doc["INCIDENT IN BRIEF"] || doc.description || doc.summary || "Bomb incident record",
+    }, 0.98);
+
+    const locationId = `location_${slugify(place)}`;
+    addNode(locationId, place, "location", "Blast Site", "high", { district, state, latitude: doc.LATITUDE || doc.latitude, longitude: doc.LONGITUDE || doc.longitude }, 0.94);
+    addLink(eventId, locationId, "occurred_at", `Bomb incident recorded at ${place}.`, 9, 0.97);
+
+    if (targetValue) {
+      const targetId = `target_${slugify(targetValue)}`;
+      addNode(targetId, targetValue, "organization", "Targeted Asset", "high", { category: "strategic target" }, 0.9);
+      addLink(eventId, targetId, "targeted", `Explosive event targeted ${targetValue}.`, 8, 0.92);
+    }
+
+    if (device) {
+      const deviceId = `device_${slugify(device)}`;
+      addNode(deviceId, device, "vehicle", "IED / Explosive Device", "high", { category: "explosive device" }, 0.88);
+      addLink(eventId, deviceId, "used_device", `The incident used ${device}.`, 7, 0.91);
+    }
+
+    if (explosive) {
+      const explosiveId = `explosive_${slugify(explosive)}`;
+      addNode(explosiveId, explosive, "financial_account", "Explosive Material", "medium", { category: "hazardous material" }, 0.84);
+      addLink(eventId, explosiveId, "used_material", `Recovered or documented explosive material: ${explosive}.`, 6, 0.88);
+    }
+
+    if (terroristGroup && terroristGroup !== "Unknown group") {
+      const groupId = `group_${slugify(terroristGroup)}`;
+      addNode(groupId, terroristGroup, "organization", "Suspicious Group", "critical", { category: "terrorist network" }, 0.92);
+      addLink(eventId, groupId, "linked_to_group", `Bomb incident is associated with ${terroristGroup}.`, 8, 0.94);
+    }
+  });
+
+  return {
+    nodes: Array.from(nodeMap.values()),
+    links,
+  };
+}
+
 export async function fetchLiveGraphData(): Promise<{ nodes: any[]; links: any[]; source: string } | null> {
   // 1. Prioritize live data pushed by partner's local device agent
   if (partnerLiveCache && partnerLiveCache.nodes.length > 0) {
@@ -404,6 +501,25 @@ export async function fetchLiveGraphData(): Promise<{ nodes: any[]; links: any[]
           links,
           source: "mongodb_atlas_live",
         };
+      }
+
+      const candidateCollections = ["Bomb Data", "BombData", "bomb_data", "bombdata", "bomb", "bomb_incidents"];
+      for (const name of candidateCollections) {
+        try {
+          const bombDocs = await db.collection(name).find({}).toArray();
+          if (bombDocs.length > 0) {
+            const bombGraph = buildBombDataGraph(bombDocs);
+            if (bombGraph.nodes.length > 0) {
+              return {
+                nodes: bombGraph.nodes,
+                links: bombGraph.links,
+                source: `mongodb_bomb_data_live:${name}`,
+              };
+            }
+          }
+        } catch {
+          // Skip collections that don't exist.
+        }
       }
     } catch (err: any) {
       console.warn("Error querying MongoDB live graph:", err.message);
