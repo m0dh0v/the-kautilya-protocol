@@ -44,31 +44,55 @@ function normalizeEntityType(properties: any, labels: string[] = []): string {
   const raw = String(
     properties?.type ||
     properties?.entityType ||
+    properties?.entity_type ||
     properties?.category ||
     properties?.kind ||
     labels.find((label) => label.toLowerCase() !== "entity") ||
-    "person"
+    ""
   ).toLowerCase().replace(/[\s-]+/g, "_");
 
-  if (["person", "individual", "human"].includes(raw)) return "person";
-  if (["organization", "organisation", "org", "company", "agency"].includes(raw)) return "organization";
-  if (["location", "place", "station", "crime_scene"].includes(raw)) return "location";
-  if (["phone", "mobile", "imei"].includes(raw)) return "phone";
-  if (["vehicle", "car", "auto"].includes(raw)) return "vehicle";
-  if (["financial_account", "bank_account", "account", "wallet", "upi"].includes(raw)) return "financial_account";
   if (raw.includes("phone") || raw.includes("mobile") || raw.includes("imei")) return "phone";
   if (raw.includes("vehicle") || raw.includes("car") || raw.includes("auto")) return "vehicle";
   if (raw.includes("camera") || raw.includes("location") || raw.includes("station") || raw.includes("place")) return "location";
   if (raw.includes("upi") || raw.includes("bank") || raw.includes("account") || raw.includes("wallet") || raw.includes("financial")) return "financial_account";
   if (raw.includes("org") || raw.includes("company") || raw.includes("agency")) return "organization";
+
+  const searchable = JSON.stringify({
+    role: properties?.role,
+    name: properties?.name || properties?.label || properties?.title,
+    attributes: properties?.attributes,
+    phone: properties?.phone || properties?.mobile || properties?.phoneNumber,
+    imei: properties?.imei,
+    vehicle: properties?.vehicle || properties?.vehiclePlate || properties?.registrationNumber,
+    account: properties?.account || properties?.accountNumber || properties?.bankName || properties?.upiId,
+    organization: properties?.organization || properties?.company || properties?.agency,
+    latitude: properties?.latitude,
+    longitude: properties?.longitude,
+  }).toLowerCase();
+
+  if (/phone|mobile|imei|sim|msisdn/.test(searchable)) return "phone";
+  if (/vehicle|car|auto|plate|registration/.test(searchable)) return "vehicle";
+  if (/bank|account|wallet|upi|financial|ifsc|transaction/.test(searchable)) return "financial_account";
+  if (/organization|company|agency|corporation|group/.test(searchable)) return "organization";
+  if (/location|station|address|latitude|longitude|place/.test(searchable)) return "location";
   return "person";
 }
 
-function normalizeGraphNodes(nodes: any[]): any[] {
-  return nodes.map((node) => ({
+function normalizeLiveEntity(node: any): any {
+  const attributes = node?.attributes && typeof node.attributes === "object" ? node.attributes : {};
+  const properties = { ...node, attributes };
+  return {
     ...node,
-    type: normalizeEntityType(node),
-  }));
+    id: node.id || String(node._id || node.identity),
+    name: node.name || node.label || node.title || node.value || node.id || "Unknown entity",
+    type: normalizeEntityType(properties, Array.isArray(node.labels) ? node.labels : []),
+    role: node.role || node.description || "Entity",
+    riskLevel: ["critical", "high", "medium", "low"].includes(String(node.riskLevel).toLowerCase())
+      ? String(node.riskLevel).toLowerCase()
+      : "medium",
+    attributes,
+    confidenceScore: Number(node.confidenceScore ?? node.confidence ?? 0.9),
+  };
 }
 
 function normalizeNeo4jEntity(node: any): any {
@@ -609,7 +633,7 @@ export async function fetchLiveGraphData(): Promise<{ nodes: any[]; links: any[]
   // 1. Prioritize live data pushed by partner's local device agent
   if (partnerLiveCache && partnerLiveCache.nodes.length > 0) {
     return {
-      nodes: normalizeGraphNodes(partnerLiveCache.nodes),
+      nodes: partnerLiveCache.nodes.map(normalizeLiveEntity),
       links: partnerLiveCache.links,
       source: "partner_device_live",
     };
@@ -622,15 +646,7 @@ export async function fetchLiveGraphData(): Promise<{ nodes: any[]; links: any[]
       const rawNodes = await db.collection("entities").find({}).toArray();
       const rawLinks = await db.collection("relationships").find({}).toArray();
 
-      const nodes = rawNodes.map((n) => ({
-          id: n.id || String(n._id),
-          name: n.name,
-          type: normalizeEntityType(n),
-          role: n.role || "Target",
-          riskLevel: n.riskLevel || "medium",
-          attributes: n.attributes || {},
-          confidenceScore: n.confidenceScore || 0.9,
-      }));
+        const nodes = rawNodes.map(normalizeLiveEntity);
 
       const links = rawLinks.map((l) => ({
           id: l.id || String(l._id),
