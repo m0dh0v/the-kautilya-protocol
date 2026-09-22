@@ -421,6 +421,177 @@ function buildBombDataGraph(docs: any[]): { nodes: any[]; links: any[] } {
   };
 }
 
+const DAWOOD_LOCATION_COORDINATES: Record<string, [number, number]> = {
+  "Delhi Connaught Place": [28.6315, 77.2167],
+  "Delhi Karol Bagh": [28.6519, 77.1909],
+  "Dubai Airport": [25.2532, 55.3657],
+  "Dubai Gold Souk": [25.2854, 55.2972],
+  "Dubai Hills": [25.1086, 55.2456],
+  "Dubai JLT": [25.0674, 55.1419],
+  "Dubai Marina": [25.0805, 55.1403],
+  "Dubai Port": [25.2697, 55.2797],
+  "Karachi Clifton": [24.8138, 67.0305],
+  "Karachi": [24.8607, 67.0011],
+  "Karachi Port": [24.7995, 66.9748],
+  "Mumbai Andheri": [19.1197, 72.8468],
+  "Mumbai Bandra": [19.0607, 72.8362],
+  "Mumbai Central": [18.9696, 72.8194],
+  "Mumbai Dadar": [19.0178, 72.8478],
+  "Mumbai Lower Parel": [18.9988, 72.8258],
+  "Mumbai Powai": [19.1176, 72.9060],
+};
+
+function normalizeDawoodLocation(value: string): string {
+  const trimmed = value.replace(/^GN-[A-Za-z0-9]+\s+/, "").trim();
+  if (trimmed === "Delhi") return "Delhi Connaught Place";
+  if (trimmed === "Karachi") return "Karachi";
+  if (trimmed === "Karachi Port") return "Karachi Port";
+  return trimmed;
+}
+
+function buildDawoodLocationGraph(
+  people: any[],
+  telecom: any[],
+  vehicleLogs: any[],
+  transactions: any[]
+): { nodes: any[]; links: any[] } {
+  const nodes: any[] = [];
+  const links: any[] = [];
+  const nodeIds = new Set<string>();
+  const locationNames = new Set<string>();
+  const personIdsByName = new Map<string, string>();
+
+  const addNode = (node: any) => {
+    if (!nodeIds.has(node.id)) {
+      nodes.push(node);
+      nodeIds.add(node.id);
+    }
+  };
+
+  const addLocation = (value: string) => {
+    const name = normalizeDawoodLocation(value);
+    const coordinates = DAWOOD_LOCATION_COORDINATES[name];
+    if (!coordinates || locationNames.has(name)) return;
+    const id = `dawood_location_${slugify(name)}`;
+    addNode({
+      id,
+      name,
+      type: "location",
+      role: "Dawood Network Intelligence Location",
+      riskLevel: "high",
+      attributes: {
+        sourceDataset: "Dawood",
+        associatedNetwork: "Dawood Network",
+        details: "Location derived from Dawood telecom and vehicle intelligence records.",
+      },
+      confidenceScore: 0.9,
+      latitude: coordinates[0],
+      longitude: coordinates[1],
+      locationCategory: "other",
+    });
+    locationNames.add(name);
+  };
+
+  const addPerson = (name: string, attributes: Record<string, any> = {}) => {
+    const normalizedName = String(name || "Unknown Person").trim();
+    const key = normalizedName.toLowerCase();
+    if (!normalizedName || normalizedName === "Unknown Person") return null;
+    const existingId = personIdsByName.get(key);
+    if (existingId) return existingId;
+    const id = `dawood_person_${slugify(normalizedName)}`;
+    addNode({
+      id,
+      name: normalizedName,
+      type: "person",
+      role: attributes.role || "Dawood Dataset Associate",
+      riskLevel: "high",
+      attributes: { sourceDataset: "Dawood", ...attributes },
+      confidenceScore: 0.88,
+    });
+    personIdsByName.set(key, id);
+    return id;
+  };
+
+  const addRelationship = (id: string, source: string | null, target: string | null, relationshipType: string, evidenceSummary: string, weight = 5) => {
+    if (!source || !target || source === target) return;
+    links.push({ id, source, target, relationshipType, evidenceSummary, weight, confidence: 0.88 });
+  };
+
+  const networkId = "dawood_network";
+  addNode({
+    id: networkId,
+    name: "Dawood Network",
+    type: "organization",
+    role: "Organized Crime Network",
+    riskLevel: "critical",
+    attributes: { sourceDataset: "Dawood" },
+    confidenceScore: 0.94,
+  });
+
+  people.forEach((person) => {
+    const personId = addPerson(person.Name, {
+      alias: person.Alias,
+      role: person.Role,
+      location: person["Country/HQ"],
+      contact: person.Phone || person.Synthetic_Phone_Number,
+    });
+    const hq = String(person["Country/HQ"] || "");
+    const city = hq.split("/")[1];
+    if (city) {
+      const locationName = Object.keys(DAWOOD_LOCATION_COORDINATES).find((name) => name.includes(city));
+      if (locationName) {
+        addLocation(locationName);
+        addRelationship(`dawood_hq_${personId}_${slugify(locationName)}`, personId, `dawood_location_${slugify(locationName)}`, "based_in", "Dawood People record lists this headquarters.", 6);
+      }
+    }
+  });
+  telecom.forEach((record, index) => {
+    const callerId = addPerson(record.Caller_ID);
+    const receiverId = addPerson(record.Receiver_ID);
+    const locationName = normalizeDawoodLocation(String(record["Cell Tower Location"] || ""));
+    addLocation(locationName);
+    const locationId = `dawood_location_${slugify(locationName)}`;
+    addRelationship(`dawood_call_${record.Call_ID || index}`, callerId, receiverId, "communicated_with", `Telecom CDR ${record.Call_ID || "record"}; ${record.Type || "communication"}.`, 4);
+    addRelationship(`dawood_call_location_${record.Call_ID || index}`, callerId, locationId, "frequents_location", "Dawood telecom CDR cell-tower location.", 3);
+  });
+  vehicleLogs.forEach((record, index) => {
+    const personId = addPerson(record.Person_ID);
+    const vehicleId = `dawood_vehicle_${slugify(record.Vehicle_ID || `vehicle_${index}`)}`;
+    const locationName = normalizeDawoodLocation(String(record.Location_ID || ""));
+    addLocation(locationName);
+    addNode({
+      id: vehicleId,
+      name: String(record.Vehicle_ID || `Vehicle ${index + 1}`),
+      type: "vehicle",
+      role: "Dawood Network Vehicle",
+      riskLevel: "high",
+      attributes: { sourceDataset: "Dawood", activity: record.Activity, timestamp: record.Timestamp },
+      confidenceScore: 0.86,
+    });
+    addRelationship(`dawood_vehicle_person_${record.Log_ID || index}`, personId, vehicleId, "uses_vehicle", `Vehicle log ${record.Log_ID || "record"}.`, 4);
+    addRelationship(`dawood_vehicle_location_${record.Log_ID || index}`, vehicleId, `dawood_location_${slugify(locationName)}`, "observed_at", "Dawood vehicle log location.", 4);
+  });
+  transactions.forEach((record, index) => {
+    const senderId = addPerson(record.Sender_name);
+    const receiverId = addPerson(record.Receiver_name);
+    addRelationship(`dawood_transaction_${record.Transaction_ID || index}`, senderId, receiverId, "transferred_funds", `Transaction ${record.Transaction_ID || "record"}; ${record["Amount INR"] || "amount unavailable"}.`, 6);
+  });
+
+  nodes.filter((node) => node.type === "location").forEach((location) => {
+    links.push({
+      id: `dawood_network_${location.id}`,
+      source: networkId,
+      target: location.id,
+      relationshipType: "operates_in",
+      evidenceSummary: "Dawood dataset records network activity at this location.",
+      weight: 8,
+      confidence: 0.9,
+    });
+  });
+
+  return { nodes, links };
+}
+
 export async function fetchLiveGraphData(): Promise<{ nodes: any[]; links: any[]; source: string } | null> {
   // 1. Prioritize live data pushed by partner's local device agent
   if (partnerLiveCache && partnerLiveCache.nodes.length > 0) {
@@ -470,6 +641,15 @@ export async function fetchLiveGraphData(): Promise<{ nodes: any[]; links: any[]
       } catch {
         // Collection not found in this Atlas database; continue to Neo4j fallback.
       }
+
+      const dawoodGraph = buildDawoodLocationGraph(
+        await db.collection("Dawood-People").find({}).toArray(),
+        await db.collection("Dawood-Telecom").find({}).toArray(),
+        await db.collection("Dawood-VehicleLogs").find({}).toArray(),
+        await db.collection("Dawood-Transaction").find({}).toArray()
+      );
+      nodes.push(...dawoodGraph.nodes);
+      links.push(...dawoodGraph.links);
 
       if (nodes.length > 0) {
         return {
@@ -682,6 +862,14 @@ export async function syncAtlasToNeo4j(
       nodes.push(...bombGraph.nodes);
       links.push(...bombGraph.links);
     }
+    const dawoodGraph = buildDawoodLocationGraph(
+      await db.collection("Dawood-People").find({}).toArray(),
+      await db.collection("Dawood-Telecom").find({}).toArray(),
+      await db.collection("Dawood-VehicleLogs").find({}).toArray(),
+      await db.collection("Dawood-Transaction").find({}).toArray()
+    );
+    nodes.push(...dawoodGraph.nodes);
+    links.push(...dawoodGraph.links);
     const session = driver.session();
 
     try {

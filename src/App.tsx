@@ -16,7 +16,7 @@ import { ExportDossierModal } from "./components/ExportDossierModal";
 import { IntelligenceSourcesDrawer } from "./components/IntelligenceSourcesDrawer";
 import { DatabaseConnectModal } from "./components/DatabaseConnectModal";
 import { NetraLogo, RruShieldLogo, SitaicsCircularLogo } from "./components/Logos";
-import { CyberHologramCanvas, CyberThemeMode } from "./components/CyberHologramCanvas";
+import { CyberHologramCanvas } from "./components/CyberHologramCanvas";
 import { HomeView } from "./components/HomeView";
 import { AboutUsView } from "./components/AboutUsView";
 import { GalleryView } from "./components/GalleryView";
@@ -75,7 +75,7 @@ export default function App() {
   const [highlightedPathLinkIds, setHighlightedPathLinkIds] = useState<string[]>([]);
 
   // Search input state
-  const [searchQuery, setSearchQuery] = useState("");
+  const [searchParameters, setSearchParameters] = useState<string[]>([]);
   const [searchResults, setSearchResults] = useState<Entity[]>([]);
 
   // Modals / Drawers state
@@ -89,6 +89,8 @@ export default function App() {
   const [graphError, setGraphError] = useState<string | null>(null);
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
   const [pathfinderInitialStartId, setPathfinderInitialStartId] = useState<string | null>(null);
+  const graphSignatureRef = useRef<string | null>(null);
+  const graphFetchInFlightRef = useRef(false);
 
   // Poll database status and real-time graph updates
   const fetchDatabaseStatus = async () => {
@@ -104,17 +106,38 @@ export default function App() {
   };
 
   const fetchLiveGraph = async () => {
+    if (graphFetchInFlightRef.current) return;
+    graphFetchInFlightRef.current = true;
+
     try {
       const res = await fetch("/api/graph/data");
       if (res.ok) {
         const data = await res.json();
         if (Array.isArray(data.nodes) && Array.isArray(data.links) && data.nodes.length > 0) {
-          setCaseData((prev) => ({
-            ...prev,
-            nodes: data.nodes,
-            entities: data.nodes,
-            links: data.links,
-          }));
+          const signature = JSON.stringify({
+            nodes: data.nodes
+              .map((node: Entity) => ({ id: node.id, type: node.type, name: node.name, riskLevel: node.riskLevel }))
+              .sort((a: { id: string }, b: { id: string }) => a.id.localeCompare(b.id)),
+            links: data.links
+              .map((link: Relationship) => ({
+                id: link.id,
+                source: typeof link.source === "object" ? link.source.id : link.source,
+                target: typeof link.target === "object" ? link.target.id : link.target,
+                relationshipType: link.relationshipType,
+                weight: link.weight,
+              }))
+              .sort((a: { id: string }, b: { id: string }) => a.id.localeCompare(b.id)),
+          });
+
+          if (graphSignatureRef.current !== signature) {
+            graphSignatureRef.current = signature;
+            setCaseData((prev) => ({
+              ...prev,
+              nodes: data.nodes,
+              entities: data.nodes,
+              links: data.links,
+            }));
+          }
           setGraphSource(data.dataSource || "unknown");
           setGraphCounts(data.graphCounts || { nodes: data.nodes.length, links: data.links.length });
           setGraphError(null);
@@ -134,6 +157,8 @@ export default function App() {
       const message = err instanceof Error ? err.message : "Could not fetch real-time graph data";
       setGraphError(message);
       setCaseData((prev) => ({ ...prev, nodes: [], entities: [], links: [] }));
+    } finally {
+      graphFetchInFlightRef.current = false;
     }
   };
 
@@ -162,21 +187,32 @@ export default function App() {
     const interval = setInterval(() => {
       fetchDatabaseStatus();
       fetchLiveGraph();
-    }, 15000);
+    }, 120000);
 
     return () => clearInterval(interval);
   }, [isAuthenticated]);
 
   // Nav Dropdowns open state
-  const [activeDropdown, setActiveDropdown] = useState<string | null>(null);
+  const [openDropdowns, setOpenDropdowns] = useState<Set<string>>(new Set());
   const dropdownRef = useRef<HTMLDivElement>(null);
-  const [cyberTheme, setCyberTheme] = useState<CyberThemeMode>("arc-cyan");
+
+  const toggleDropdown = (dropdown: string) => {
+    setOpenDropdowns((previous) => {
+      const next = new Set(previous);
+      if (next.has(dropdown)) {
+        next.delete(dropdown);
+      } else {
+        next.add(dropdown);
+      }
+      return next;
+    });
+  };
 
   // Close dropdown on click outside
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
-        setActiveDropdown(null);
+        setOpenDropdowns(new Set());
       }
     }
     document.addEventListener("mousedown", handleClickOutside);
@@ -194,22 +230,46 @@ export default function App() {
     return enrichedNodes.find((n) => n.id === selectedNodeId) || null;
   }, [enrichedNodes, selectedNodeId]);
 
+  const focusedGraph = useMemo(() => {
+    if (!searchParameters.length) {
+      return { nodes: enrichedNodes, links: caseData.links };
+    }
+
+    const terms = searchParameters.map((parameter) => parameter.toLowerCase().trim()).filter(Boolean);
+    const matches = enrichedNodes.filter((node) => {
+      const searchableText = [node.id, node.name, node.role, ...Object.values(node.attributes)]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      return terms.every((term) => searchableText.includes(term));
+    });
+    const visibleIds = new Set(matches.map((node) => node.id));
+
+    return {
+      nodes: enrichedNodes.filter((node) => visibleIds.has(node.id)),
+      links: caseData.links.filter((link) => {
+        const sourceId = typeof link.source === "object" ? link.source.id : link.source;
+        const targetId = typeof link.target === "object" ? link.target.id : link.target;
+        return visibleIds.has(sourceId) && visibleIds.has(targetId);
+      }),
+    };
+  }, [caseData.links, enrichedNodes, searchParameters]);
+
   // Handle Search
   useEffect(() => {
-    if (!searchQuery.trim()) {
+    if (!searchParameters.length) {
       setSearchResults([]);
       return;
     }
-    const q = searchQuery.toLowerCase();
-    const matches = enrichedNodes.filter(
-      (n) =>
-        n.name.toLowerCase().includes(q) ||
-        n.role.toLowerCase().includes(q) ||
-        n.attributes.alias?.toLowerCase().includes(q) ||
-        n.attributes.contact?.includes(q)
-    );
+    const matches = enrichedNodes.filter((node) => {
+      const searchableText = [node.id, node.name, node.role, ...Object.values(node.attributes)]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      return searchParameters.every((parameter) => searchableText.includes(parameter.toLowerCase().trim()));
+    });
     setSearchResults(matches.slice(0, 6));
-  }, [searchQuery, enrichedNodes]);
+  }, [searchParameters, enrichedNodes]);
 
   // Path highlighting helpers
   const handleHighlightPath = (nodeIds: string[], linkIds: string[]) => {
@@ -282,25 +342,24 @@ export default function App() {
   }
 
   return (
-    <div id="app-root" className="w-full h-screen flex flex-col bg-[#030712] text-slate-100 overflow-hidden font-sans relative select-none">
+    <div id="app-root" className="w-full h-screen flex flex-col md:flex-row bg-[#030712] text-slate-100 overflow-hidden font-sans relative select-none">
       {/* ========================================================================= */}
       {/* ANIMATED HACKER BACKGROUND (IRON MAN STARK HUD / CEREBRO NEURAL MATRIX)   */}
       {/* ========================================================================= */}
-      <CyberHologramCanvas theme={cyberTheme} onThemeChange={setCyberTheme} />
-
+      <CyberHologramCanvas showControls={false} />
       {/* ========================================================================= */}
       {/* 1. TOP HEADER - STARK TACTICAL FLIGHT DECK / CEREBRO COMMAND CONSOLE      */}
       {/* ========================================================================= */}
-      <header className="w-full bg-slate-950/80 backdrop-blur-xl border-b border-cyan-500/25 shrink-0 z-[1000] shadow-[0_4px_30px_rgba(0,240,255,0.08)] relative">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-20 flex items-center justify-between relative">
+      <header className="w-full md:w-56 lg:w-60 md:h-full md:overflow-y-auto bg-slate-950/90 backdrop-blur-xl border-b md:border-b-0 md:border-r border-cyan-500/25 shrink-0 z-[1000] shadow-[4px_0_30px_rgba(0,240,255,0.08)] relative flex flex-col">
+        <div className="max-w-7xl mx-auto px-5 sm:px-6 lg:px-7 h-20 md:h-auto md:contents w-full flex items-center justify-between md:flex-col md:justify-start relative">
           {/* Left: Team NETRA 404 Logo with Arc-Reactor Glow */}
           <div
             onClick={() => setCurrentView("home")}
-            className="flex items-center gap-3 cursor-pointer group select-none transition-transform hover:scale-[1.02]"
+            className="flex items-center justify-center gap-2 cursor-pointer group select-none transition-transform hover:scale-[1.02] md:order-3 md:mt-auto md:mb-5 md:pt-5 md:w-full md:border-t md:border-cyan-400/15"
             title="Return to Cyber Command Portal"
           >
             <NetraLogo
-              className="h-11 sm:h-12"
+              className="h-9 sm:h-10 md:h-10"
               iconClassName="text-cyan-400 drop-shadow-[0_0_14px_rgba(0,240,255,0.7)]"
               textClassName="text-white drop-shadow-[0_0_10px_rgba(0,240,255,0.35)]"
               subtitleClassName="text-cyan-400/90 font-mono tracking-[0.25em]"
@@ -308,42 +367,38 @@ export default function App() {
           </div>
 
           {/* Center: Project Name & Sanskrit Motto with Holographic Illumination */}
-          <div className="absolute left-1/2 -translate-x-1/2 text-center px-2 flex flex-col items-center justify-center">
+          <div className="absolute left-1/2 -translate-x-1/2 text-center px-2 flex flex-col items-center justify-center md:static md:translate-x-0 md:order-1 md:w-full md:pt-8 md:pb-7 md:border-b md:border-cyan-400/15">
             <div className="flex items-center gap-2">
-              <span className="text-cyan-400 font-mono text-[10px] hidden md:inline opacity-70">[</span>
-              <h1 className="text-xl sm:text-2xl md:text-[27px] font-black tracking-[0.22em] text-transparent bg-clip-text bg-gradient-to-b from-white via-cyan-100 to-cyan-400 uppercase font-serif-official drop-shadow-[0_0_15px_rgba(0,240,255,0.4)]">
-                THE KAUTILYA PROTOCOL
+              <h1 className="text-lg sm:text-2xl md:text-[25px] leading-[1.2] font-black tracking-[0.16em] text-transparent bg-clip-text bg-gradient-to-b from-white via-cyan-100 to-cyan-400 uppercase font-serif-official drop-shadow-[0_0_15px_rgba(0,240,255,0.4)]">
+                <span className="block">THE</span>
+                <span className="block">KAUTILYA</span>
+                <span className="block">PROTOCOL</span>
               </h1>
-              <span className="text-cyan-400 font-mono text-[10px] hidden md:inline opacity-70">]</span>
             </div>
-            <p className="text-xs sm:text-sm font-semibold text-cyan-200/90 tracking-wider mt-0.5 font-hindi drop-shadow-[0_0_8px_rgba(0,240,255,0.3)]">
+            <p className="text-[11px] sm:text-sm font-semibold text-cyan-200/90 tracking-wider mt-2 font-hindi drop-shadow-[0_0_8px_rgba(0,240,255,0.3)]">
               संबंधेषु रहस्यं, विश्लेषणे सत्यं।
             </p>
-            <div className="hidden sm:flex items-center gap-2 text-[9px] font-mono text-cyan-400/80 uppercase tracking-widest mt-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping" />
+            <div className="hidden sm:flex items-center gap-2 text-[8px] font-mono text-cyan-400/80 uppercase tracking-[0.18em] mt-2">
               <span>In relationships lies the mystery, in analysis lies the truth</span>
             </div>
           </div>
         </div>
 
-        {/* Indian Flag Tricolor Photon Energy Strip */}
-        <div className="w-full h-1 bg-gradient-to-r from-[#FF9933] via-[#FFFFFF] to-[#138808] shadow-[0_0_12px_rgba(255,153,51,0.7),0_0_12px_rgba(19,136,8,0.7)] relative z-10" />
-
         {/* ========================================================================= */}
         {/* 2. SUB-NAVIGATION BAR (HACKER HUD STYLING WITH ACTIVE STATES & DROPDOWNS) */}
         {/* ========================================================================= */}
-        <div ref={dropdownRef} className="relative z-[1001] bg-slate-950/75 border-b border-cyan-500/20 backdrop-blur-lg">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-12 flex items-center justify-between">
+        <div ref={dropdownRef} className="relative z-[1001] order-2 bg-slate-950/75 border-b md:border-b-0 border-cyan-500/20 backdrop-blur-lg">
+          <div className="max-w-7xl mx-auto px-5 sm:px-6 lg:px-7 min-h-12 md:min-h-0 md:py-4 flex flex-col md:items-stretch gap-3">
             {/* Nav Links */}
-            <nav className="flex items-center gap-1 sm:gap-2 h-full text-xs font-bold text-slate-300">
+            <nav className="flex flex-wrap md:flex-col items-stretch gap-1 sm:gap-2 h-full text-xs font-bold text-slate-300">
               {/* HOME */}
               <button
                 id="nav-link-home"
                 onClick={() => {
                   setCurrentView("home");
-                  setActiveDropdown(null);
+                  setOpenDropdowns(new Set());
                 }}
-                className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer font-mono ${
+                className={`w-full text-left px-3.5 py-2.5 rounded-lg transition-all cursor-pointer font-mono ${
                   currentView === "home"
                     ? "text-cyan-300 bg-cyan-950/60 border border-cyan-400/50 shadow-[0_0_15px_rgba(0,240,255,0.25)] font-extrabold"
                     : "hover:text-cyan-200 hover:bg-slate-900/70 border border-transparent"
@@ -357,9 +412,9 @@ export default function App() {
                 id="nav-link-about"
                 onClick={() => {
                   setCurrentView("about");
-                  setActiveDropdown(null);
+                  setOpenDropdowns(new Set());
                 }}
-                className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer font-mono ${
+                className={`w-full text-left px-3.5 py-2.5 rounded-lg transition-all cursor-pointer font-mono ${
                   currentView === "about"
                     ? "text-cyan-300 bg-cyan-950/60 border border-cyan-400/50 shadow-[0_0_15px_rgba(0,240,255,0.25)] font-extrabold"
                     : "hover:text-cyan-200 hover:bg-slate-900/70 border border-transparent"
@@ -373,9 +428,9 @@ export default function App() {
                 id="nav-link-gallery"
                 onClick={() => {
                   setCurrentView("gallery");
-                  setActiveDropdown(null);
+                  setOpenDropdowns(new Set());
                 }}
-                className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer font-mono ${
+                className={`w-full text-left px-3.5 py-2.5 rounded-lg transition-all cursor-pointer font-mono ${
                   currentView === "gallery"
                     ? "text-cyan-300 bg-cyan-950/60 border border-cyan-400/50 shadow-[0_0_15px_rgba(0,240,255,0.25)] font-extrabold"
                     : "hover:text-cyan-200 hover:bg-slate-900/70 border border-transparent"
@@ -389,9 +444,9 @@ export default function App() {
   id="nav-link-map"
   onClick={() => {
     setCurrentView("map");
-    setActiveDropdown(null);
+    setOpenDropdowns(new Set());
   }}
-  className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer font-mono ${
+  className={`w-full text-left px-3.5 py-2.5 rounded-lg transition-all cursor-pointer font-mono ${
     currentView === "map"
       ? "text-cyan-300 bg-cyan-950/60 border border-cyan-400/50 shadow-[0_0_15px_rgba(0,240,255,0.25)] font-extrabold"
       : "hover:text-cyan-200 hover:bg-slate-900/70 border border-transparent"
@@ -404,23 +459,26 @@ export default function App() {
               <div className="relative">
                 <button
                   id="nav-dropdown-intelligence"
-                  onClick={() => setActiveDropdown(activeDropdown === "intelligence" ? null : "intelligence")}
-                  className={`flex items-center gap-1 px-3 py-1.5 rounded-lg transition-all cursor-pointer font-mono ${
+                  onClick={() => toggleDropdown("intelligence")}
+                  className={`w-full justify-between flex items-center gap-1 px-3.5 py-2.5 rounded-lg transition-all cursor-pointer font-mono ${
                     ["network", "influencers", "patterns", "copilot"].includes(currentView)
                       ? "text-cyan-300 bg-cyan-950/60 border border-cyan-400/50 shadow-[0_0_15px_rgba(0,240,255,0.25)] font-extrabold"
                       : "hover:text-cyan-200 hover:bg-slate-900/70 border border-transparent"
                   }`}
                 >
                   <span>INTELLIGENCE</span>
-                  <ChevronDown className="w-3.5 h-3.5 text-cyan-400" />
+                  <ChevronDown className={`w-3.5 h-3.5 text-cyan-400 transition-transform ${openDropdowns.has("intelligence") ? "rotate-180" : ""}`} />
                 </button>
 
-                {activeDropdown === "intelligence" && (
-                  <div className="absolute top-full left-0 mt-1.5 w-64 bg-slate-950/95 border border-cyan-500/40 rounded-2xl shadow-[0_0_30px_rgba(0,240,255,0.2)] py-2 z-50 animate-in fade-in slide-in-from-top-2 duration-150 backdrop-blur-xl divide-y divide-slate-800/80">
+                {openDropdowns.has("intelligence") && (
+                  <div className="mt-1.5 w-full bg-slate-950/95 border border-cyan-500/40 rounded-2xl shadow-[0_0_30px_rgba(0,240,255,0.2)] py-2 z-50 animate-in fade-in slide-in-from-top-2 duration-150 backdrop-blur-xl divide-y divide-slate-800/80">
+                    <div className="flex items-center justify-between px-4 pb-2 mb-1 border-b border-slate-800/80">
+                      <span className="text-[9px] font-mono uppercase tracking-[0.18em] text-cyan-400/70">Intelligence</span>
+                    </div>
                     <button
                       onClick={() => {
                         setCurrentView("network");
-                        setActiveDropdown(null);
+                        setOpenDropdowns(new Set());
                       }}
                       className="w-full text-left px-4 py-2.5 hover:bg-cyan-950/40 flex items-center gap-2.5 text-xs text-slate-200 font-semibold cursor-pointer group"
                     >
@@ -434,7 +492,7 @@ export default function App() {
                     <button
                       onClick={() => {
                         setCurrentView("influencers");
-                        setActiveDropdown(null);
+                        setOpenDropdowns(new Set());
                       }}
                       className="w-full text-left px-4 py-2.5 hover:bg-cyan-950/40 flex items-center gap-2.5 text-xs text-slate-200 font-semibold cursor-pointer group"
                     >
@@ -448,7 +506,7 @@ export default function App() {
                     <button
                       onClick={() => {
                         setCurrentView("patterns");
-                        setActiveDropdown(null);
+                        setOpenDropdowns(new Set());
                       }}
                       className="w-full text-left px-4 py-2.5 hover:bg-cyan-950/40 flex items-center justify-between text-xs text-slate-200 font-semibold cursor-pointer group"
                     >
@@ -467,7 +525,7 @@ export default function App() {
                     <button
                       onClick={() => {
                         setCurrentView("copilot");
-                        setActiveDropdown(null);
+                        setOpenDropdowns(new Set());
                       }}
                       className="w-full text-left px-4 py-2.5 hover:bg-cyan-950/40 flex items-center gap-2.5 text-xs text-slate-200 font-semibold cursor-pointer group"
                     >
@@ -485,23 +543,26 @@ export default function App() {
               <div className="relative">
                 <button
                   id="nav-dropdown-case"
-                  onClick={() => setActiveDropdown(activeDropdown === "case" ? null : "case")}
-                  className={`flex items-center gap-1 px-3 py-1.5 rounded-lg transition-all cursor-pointer font-mono ${
+                  onClick={() => toggleDropdown("case")}
+                  className={`w-full justify-between flex items-center gap-1 px-3.5 py-2.5 rounded-lg transition-all cursor-pointer font-mono ${
                     currentView === "pathfinder"
                       ? "text-cyan-300 bg-cyan-950/60 border border-cyan-400/50 shadow-[0_0_15px_rgba(0,240,255,0.25)] font-extrabold"
                       : "hover:text-cyan-200 hover:bg-slate-900/70 border border-transparent"
                   }`}
                 >
                   <span>CASE MANAGEMENT</span>
-                  <ChevronDown className="w-3.5 h-3.5 text-cyan-400" />
+                  <ChevronDown className={`w-3.5 h-3.5 text-cyan-400 transition-transform ${openDropdowns.has("case") ? "rotate-180" : ""}`} />
                 </button>
 
-                {activeDropdown === "case" && (
-                  <div className="absolute top-full left-0 mt-1.5 w-64 bg-slate-950/95 border border-cyan-500/40 rounded-2xl shadow-[0_0_30px_rgba(0,240,255,0.2)] py-2 z-50 animate-in fade-in slide-in-from-top-2 duration-150 backdrop-blur-xl divide-y divide-slate-800/80">
+                {openDropdowns.has("case") && (
+                  <div className="mt-1.5 w-full bg-slate-950/95 border border-cyan-500/40 rounded-2xl shadow-[0_0_30px_rgba(0,240,255,0.2)] py-2 z-50 animate-in fade-in slide-in-from-top-2 duration-150 backdrop-blur-xl divide-y divide-slate-800/80">
+                    <div className="flex items-center justify-between px-4 pb-2 mb-1 border-b border-slate-800/80">
+                      <span className="text-[9px] font-mono uppercase tracking-[0.18em] text-cyan-400/70">Case Management</span>
+                    </div>
                     <button
                       onClick={() => {
                         setIsIngestionModalOpen(true);
-                        setActiveDropdown(null);
+                        setOpenDropdowns(new Set());
                       }}
                       className="w-full text-left px-4 py-2.5 hover:bg-cyan-950/40 flex items-center gap-2.5 text-xs text-slate-200 font-semibold cursor-pointer group"
                     >
@@ -515,7 +576,7 @@ export default function App() {
                     <button
                       onClick={() => {
                         setIsExportModalOpen(true);
-                        setActiveDropdown(null);
+                        setOpenDropdowns(new Set());
                       }}
                       className="w-full text-left px-4 py-2.5 hover:bg-cyan-950/40 flex items-center gap-2.5 text-xs text-slate-200 font-semibold cursor-pointer group"
                     >
@@ -529,7 +590,7 @@ export default function App() {
                     <button
                       onClick={() => {
                         setIsSourcesDrawerOpen(true);
-                        setActiveDropdown(null);
+                        setOpenDropdowns(new Set());
                       }}
                       className="w-full text-left px-4 py-2.5 hover:bg-cyan-950/40 flex items-center justify-between text-xs text-slate-200 font-semibold cursor-pointer group"
                     >
@@ -548,7 +609,7 @@ export default function App() {
                     <button
                       onClick={() => {
                         setCurrentView("pathfinder");
-                        setActiveDropdown(null);
+                        setOpenDropdowns(new Set());
                       }}
                       className="w-full text-left px-4 py-2.5 hover:bg-cyan-950/40 flex items-center gap-2.5 text-xs text-slate-200 font-semibold cursor-pointer group"
                     >
@@ -566,23 +627,26 @@ export default function App() {
               <div className="relative">
                 <button
                   id="nav-dropdown-training"
-                  onClick={() => setActiveDropdown(activeDropdown === "training" ? null : "training")}
-                  className={`flex items-center gap-1 px-3 py-1.5 rounded-lg transition-all cursor-pointer font-mono ${
+                  onClick={() => toggleDropdown("training")}
+                  className={`w-full justify-between flex items-center gap-1 px-3.5 py-2.5 rounded-lg transition-all cursor-pointer font-mono ${
                     ["protocols", "blockchain"].includes(currentView)
                       ? "text-cyan-300 bg-cyan-950/60 border border-cyan-400/50 shadow-[0_0_15px_rgba(0,240,255,0.25)] font-extrabold"
                       : "hover:text-cyan-200 hover:bg-slate-900/70 border border-transparent"
                   }`}
                 >
                   <span>PROTOCOLS &amp; TRAINING</span>
-                  <ChevronDown className="w-3.5 h-3.5 text-cyan-400" />
+                  <ChevronDown className={`w-3.5 h-3.5 text-cyan-400 transition-transform ${openDropdowns.has("training") ? "rotate-180" : ""}`} />
                 </button>
 
-                {activeDropdown === "training" && (
-                  <div className="absolute top-full left-0 mt-1.5 w-64 bg-slate-950/95 border border-cyan-500/40 rounded-2xl shadow-[0_0_30px_rgba(0,240,255,0.2)] py-2 z-50 animate-in fade-in slide-in-from-top-2 duration-150 backdrop-blur-xl divide-y divide-slate-800/80">
+                {openDropdowns.has("training") && (
+                  <div className="mt-1.5 w-full bg-slate-950/95 border border-cyan-500/40 rounded-2xl shadow-[0_0_30px_rgba(0,240,255,0.2)] py-2 z-50 animate-in fade-in slide-in-from-top-2 duration-150 backdrop-blur-xl divide-y divide-slate-800/80">
+                    <div className="flex items-center justify-between px-4 pb-2 mb-1 border-b border-slate-800/80">
+                      <span className="text-[9px] font-mono uppercase tracking-[0.18em] text-cyan-400/70">Protocols &amp; Training</span>
+                    </div>
                     <button
                       onClick={() => {
                         setCurrentView("protocols");
-                        setActiveDropdown(null);
+                        setOpenDropdowns(new Set());
                       }}
                       className="w-full text-left px-4 py-2.5 hover:bg-cyan-950/40 flex items-center gap-2.5 text-xs text-slate-200 font-semibold cursor-pointer group"
                     >
@@ -596,7 +660,7 @@ export default function App() {
                     <button
                       onClick={() => {
                         setCurrentView("blockchain");
-                        setActiveDropdown(null);
+                        setOpenDropdowns(new Set());
                       }}
                       className="w-full text-left px-4 py-2.5 hover:bg-cyan-950/40 flex items-center gap-2.5 text-xs text-slate-200 font-semibold cursor-pointer group"
                     >
@@ -612,53 +676,12 @@ export default function App() {
             </nav>
 
             {/* Right: Active Case Details & Cyber Quick Search */}
-            <div className="flex items-center gap-3">
-              {/* Cyber Quick Search */}
-              <div className="relative hidden lg:block w-48 xl:w-60">
-                <div className="flex items-center bg-slate-900/80 border border-cyan-500/30 rounded-xl px-2.5 py-1 focus-within:border-cyan-400 focus-within:shadow-[0_0_12px_rgba(0,240,255,0.25)] transition-all">
-                  <Search className="w-3.5 h-3.5 text-cyan-400 mr-1.5" />
-                  <input
-                    type="text"
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder="Trace target..."
-                    className="w-full bg-transparent text-xs text-cyan-100 placeholder-cyan-700/60 focus:outline-none font-mono"
-                  />
-                  {searchQuery && (
-                    <button onClick={() => setSearchQuery("")} className="text-cyan-400 hover:text-white cursor-pointer">
-                      <X className="w-3 h-3" />
-                    </button>
-                  )}
-                </div>
-
-                {searchResults.length > 0 && (
-                  <div className="absolute top-full left-0 right-0 mt-1 bg-slate-950/95 border border-cyan-500/40 rounded-xl shadow-[0_0_25px_rgba(0,240,255,0.2)] z-50 overflow-hidden divide-y divide-slate-800">
-                    {searchResults.map((ent) => (
-                      <div
-                        key={ent.id}
-                        onClick={() => {
-                          setSelectedNodeId(ent.id);
-                          setSearchQuery("");
-                          setCurrentView("network");
-                        }}
-                        className="p-2 hover:bg-cyan-950/50 cursor-pointer flex items-center justify-between text-xs"
-                      >
-                        <div>
-                          <span className="font-bold text-cyan-200 font-mono">{ent.name}</span>
-                          <span className="text-[10px] text-cyan-400/80 font-mono block">{ent.role}</span>
-                        </div>
-                        <span className="text-[9px] uppercase font-bold text-slate-400 font-mono">{ent.type}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
+            <div className="flex items-center gap-3 md:pt-3 md:mt-1 md:border-t md:border-cyan-400/10">
               {/* Database Gateway / Real-Time Sync Indicator */}
               <button
                 id="btn-database-gateway"
                 onClick={() => setIsDbModalOpen(true)}
-                className={`flex items-center gap-1.5 text-[11px] font-mono px-3 py-1 rounded-full border transition-all cursor-pointer ${
+                className={`flex items-center gap-1.5 text-[10px] font-mono px-3.5 py-2 rounded-full border transition-all cursor-pointer ${
                   dbStatus?.mongodb?.connected || dbStatus?.neo4j?.connected
                     ? "bg-emerald-950/80 text-emerald-300 border-emerald-500/50 shadow-[0_0_12px_rgba(16,185,129,0.3)] hover:bg-emerald-900/80"
                     : "bg-cyan-950/60 text-cyan-300 border-cyan-500/40 shadow-[0_0_10px_rgba(0,240,255,0.15)] hover:bg-cyan-900/60"
@@ -676,14 +699,6 @@ export default function App() {
                     : "DB GATEWAY"}
                 </span>
               </button>
-
-              {/* Case Badge - High-Tech Holographic Badge */}
-              <div className="hidden sm:flex items-center gap-2 text-[11px] font-mono bg-emerald-950/60 text-emerald-300 px-3 py-1 rounded-full border border-emerald-500/40 shadow-[0_0_10px_rgba(16,185,129,0.2)]">
-                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                <span className="font-bold text-emerald-200">FIR 104/2024</span>
-                <span className="opacity-40">•</span>
-                <span className="text-emerald-400 font-semibold">SEC 65B CERTIFIED</span>
-              </div>
             </div>
           </div>
         </div>
@@ -697,8 +712,8 @@ export default function App() {
           {/* HOME VIEW */}
           {currentView === "home" && (
             <HomeView
-              onSearch={(query) => {
-                setSearchQuery(query);
+              onSearch={(parameters) => {
+                setSearchParameters(parameters);
                 setCurrentView("network");
               }}
               onSelectTab={(tab) => setCurrentView(tab)}
@@ -734,16 +749,28 @@ export default function App() {
           {currentView === "network" && (
             <div className="relative flex-1 min-h-0">
               <NetworkGraph
-                nodes={enrichedNodes}
-                links={caseData.links}
+                nodes={focusedGraph.nodes}
+                links={focusedGraph.links}
                 selectedNodeId={selectedNodeId}
                 onSelectNode={(node) => setSelectedNodeId(node ? node.id : null)}
                 highlightedPathNodeIds={highlightedPathNodeIds}
                 highlightedPathLinkIds={highlightedPathLinkIds}
               />
+              <aside className="absolute right-4 top-4 z-30 w-[min(300px,calc(100%-2rem))]">
+                <HomeView
+                  compact
+                  initialParameters={searchParameters}
+                  onSearch={(parameters) => setSearchParameters(parameters)}
+                  onSelectTab={(tab) => setCurrentView(tab)}
+                  onSelectEntity={(entityId) => setSelectedNodeId(entityId)}
+                  allNodes={enrichedNodes}
+                  totalLinksCount={caseData.links.length}
+                  suspiciousPatternsCount={caseData.suspiciousPatterns.length}
+                />
+              </aside>
               <div className="pointer-events-none absolute right-5 top-5 z-20 rounded-lg border border-cyan-400/30 bg-slate-950/85 px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-cyan-200 shadow-lg backdrop-blur-md">
                 <div>Source: {graphSource.replaceAll("_", " ")}</div>
-                <div className="mt-1 text-slate-400">{graphCounts.nodes || enrichedNodes.length} nodes / {graphCounts.links || caseData.links.length} links</div>
+                <div className="mt-1 text-slate-400">{focusedGraph.nodes.length} nodes / {focusedGraph.links.length} links</div>
                 {graphError && <div className="mt-1 max-w-[260px] normal-case tracking-normal text-red-300">{graphError}</div>}
               </div>
             </div>

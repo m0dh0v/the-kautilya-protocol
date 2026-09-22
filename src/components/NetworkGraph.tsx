@@ -97,6 +97,8 @@ export const NetworkGraph: React.FC<NetworkGraphProps> = ({
     });
   }, [links, filteredNodeIds]);
 
+  const isLargeGraph = filteredNodes.length > 500;
+
   // Main D3 force simulation setup
   useEffect(() => {
     if (!svgRef.current || !containerRef.current) return;
@@ -105,6 +107,7 @@ export const NetworkGraph: React.FC<NetworkGraphProps> = ({
     const height = containerRef.current.clientHeight || 600;
 
     const svg = d3.select(svgRef.current);
+    const previousTransform = d3.zoomTransform(svgRef.current);
     svg.selectAll("*").remove(); // clean slate
 
     // Definitions (Arrowheads and glows)
@@ -162,6 +165,7 @@ export const NetworkGraph: React.FC<NetworkGraphProps> = ({
       });
 
     svg.call(zoom);
+    svg.call(zoom.transform, previousTransform);
     zoomBehaviorRef.current = zoom;
 
     // Clone data for simulation
@@ -181,10 +185,11 @@ export const NetworkGraph: React.FC<NetworkGraphProps> = ({
           .id((d: any) => d.id)
           .distance(linkDistance)
       )
-      .force("charge", d3.forceManyBody().strength(chargeStrength))
+      .force("charge", d3.forceManyBody().strength(isLargeGraph ? Math.max(-180, chargeStrength * 0.6) : chargeStrength))
       .force("center", d3.forceCenter(width / 2, height / 2))
-      .force("collision", d3.forceCollide().radius((d: any) => ((d as Entity).betweenness ? 32 : 24)))
-      .alphaDecay(0.028);
+      .force("collision", d3.forceCollide().radius((d: any) => (isLargeGraph ? 14 : (d as Entity).betweenness ? 32 : 24)))
+      .alphaDecay(isLargeGraph ? 0.09 : 0.028)
+      .velocityDecay(isLargeGraph ? 0.45 : 0.4);
 
     simulationRef.current = simulation;
 
@@ -224,7 +229,7 @@ export const NetworkGraph: React.FC<NetworkGraphProps> = ({
       .attr("class", "text-[10px] font-mono fill-cyan-300/90 font-semibold select-none pointer-events-none drop-shadow-[0_0_4px_rgba(0,0,0,0.8)]")
       .attr("text-anchor", "middle")
       .attr("dy", -3)
-      .style("opacity", showEdgeLabels ? 0.9 : 0)
+      .style("opacity", !isLargeGraph && showEdgeLabels ? 0.9 : 0)
       .text((d: any) => {
         if (d.amount) return d.amount;
         if (d.frequency) return `${d.frequency}x calls`;
@@ -329,7 +334,11 @@ export const NetworkGraph: React.FC<NetworkGraphProps> = ({
 
     // Node Labels
     if (showLabels) {
-      nodeElements
+      const labelNodes = isLargeGraph
+        ? nodeElements.filter((d: any) => d.riskLevel === "critical" || d.riskLevel === "high" || d.type === "location" || d.id === selectedNodeId)
+        : nodeElements;
+
+      labelNodes
         .append("text")
         .attr("class", "text-[11px] font-bold fill-slate-100 pointer-events-none drop-shadow-[0_1px_4px_rgba(0,0,0,0.9)]")
         .attr("text-anchor", "middle")
@@ -346,7 +355,7 @@ export const NetworkGraph: React.FC<NetworkGraphProps> = ({
         });
 
       // Role subtitle label
-      nodeElements
+      labelNodes
         .append("text")
         .attr("class", "text-[9px] font-mono fill-cyan-400 font-semibold pointer-events-none drop-shadow-[0_1px_3px_rgba(0,0,0,0.9)]")
         .attr("text-anchor", "middle")
@@ -364,22 +373,35 @@ export const NetworkGraph: React.FC<NetworkGraphProps> = ({
     }
 
     // Tick update function
-    simulation.on("tick", () => {
+    let frameRequested = false;
+    let animationFrame = 0;
+    const renderFrame = () => {
+      frameRequested = false;
       linkElements
         .attr("x1", (d: any) => d.source.x)
         .attr("y1", (d: any) => d.source.y)
         .attr("x2", (d: any) => d.target.x)
         .attr("y2", (d: any) => d.target.y);
 
-      linkTextElements
-        .attr("x", (d: any) => (d.source.x + d.target.x) / 2)
-        .attr("y", (d: any) => (d.source.y + d.target.y) / 2);
+      if (!isLargeGraph) {
+        linkTextElements
+          .attr("x", (d: any) => (d.source.x + d.target.x) / 2)
+          .attr("y", (d: any) => (d.source.y + d.target.y) / 2);
+      }
 
       nodeElements.attr("transform", (d: any) => `translate(${d.x},${d.y})`);
+    };
+
+    simulation.on("tick", () => {
+      if (!frameRequested) {
+        frameRequested = true;
+        animationFrame = requestAnimationFrame(renderFrame);
+      }
     });
 
     return () => {
       simulation.stop();
+      cancelAnimationFrame(animationFrame);
     };
   }, [
     filteredNodes,
@@ -391,6 +413,7 @@ export const NetworkGraph: React.FC<NetworkGraphProps> = ({
     linkDistance,
     showLabels,
     showEdgeLabels,
+    isLargeGraph,
   ]);
 
   // Zoom control helpers

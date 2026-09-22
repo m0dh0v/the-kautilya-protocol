@@ -134,11 +134,8 @@ export const NetraLogo: React.FC<{
       {/* Bold, wide, professional typography: NETRA 404 */}
       {showText && (
         <div className="flex flex-col">
-          <span className={`text-xl sm:text-2xl font-black tracking-[0.22em] leading-none uppercase font-sans ${textClassName}`}>
+          <span className={`whitespace-nowrap text-lg sm:text-2xl md:text-lg font-black tracking-[0.1em] leading-none uppercase font-sans ${textClassName}`}>
             NETRA 404
-          </span>
-          <span className={`text-[9px] font-bold tracking-[0.3em] uppercase mt-0.5 font-mono ${subtitleClassName}`}>
-            DEFENCE & INTEL VIGILANCE
           </span>
         </div>
       )}

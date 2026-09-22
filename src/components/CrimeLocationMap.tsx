@@ -99,6 +99,7 @@ export default function CrimeLocationMap({ entities, heightClassName = "h-[520px
   const crimeScenes = located.filter((e) => e.locationCategory === "crime_scene");
   const lastKnown = located.filter((e) => e.locationCategory === "last_known_location");
   const policeStations = located.filter((e) => e.locationCategory === "police_station");
+  const dawoodLocations = located.filter((e) => e.attributes.sourceDataset === "Dawood");
 
   const networkConnections = useMemo(() => {
     const grouped = new Map<string, Entity[]>();
@@ -120,7 +121,7 @@ export default function CrimeLocationMap({ entities, heightClassName = "h-[520px
   // For every crime scene / last-known point, auto-find the nearest police station
   // and build a connecting line to it — no manual linking required.
   const connections = useMemo(() => {
-    const anchors = [...crimeScenes, ...lastKnown];
+    const anchors = [...crimeScenes, ...lastKnown, ...dawoodLocations];
     return anchors
       .map((anchor) => {
         if (policeStations.length === 0) return null;
@@ -136,7 +137,7 @@ export default function CrimeLocationMap({ entities, heightClassName = "h-[520px
         return { from: anchor, to: nearest, distanceKm: minDist };
       })
       .filter((c): c is { from: Entity; to: Entity; distanceKm: number } => c !== null);
-  }, [crimeScenes, lastKnown, policeStations]);
+  }, [crimeScenes, lastKnown, dawoodLocations, policeStations]);
 
   // Also connect crime scene -> last known location for the same case, when both exist
   const crimeToLastKnown = useMemo(() => {
