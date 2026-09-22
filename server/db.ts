@@ -50,12 +50,25 @@ function normalizeEntityType(properties: any, labels: string[] = []): string {
     "person"
   ).toLowerCase().replace(/[\s-]+/g, "_");
 
+  if (["person", "individual", "human"].includes(raw)) return "person";
+  if (["organization", "organisation", "org", "company", "agency"].includes(raw)) return "organization";
+  if (["location", "place", "station", "crime_scene"].includes(raw)) return "location";
+  if (["phone", "mobile", "imei"].includes(raw)) return "phone";
+  if (["vehicle", "car", "auto"].includes(raw)) return "vehicle";
+  if (["financial_account", "bank_account", "account", "wallet", "upi"].includes(raw)) return "financial_account";
   if (raw.includes("phone") || raw.includes("mobile") || raw.includes("imei")) return "phone";
   if (raw.includes("vehicle") || raw.includes("car") || raw.includes("auto")) return "vehicle";
   if (raw.includes("camera") || raw.includes("location") || raw.includes("station") || raw.includes("place")) return "location";
   if (raw.includes("upi") || raw.includes("bank") || raw.includes("account") || raw.includes("wallet") || raw.includes("financial")) return "financial_account";
   if (raw.includes("org") || raw.includes("company") || raw.includes("agency")) return "organization";
   return "person";
+}
+
+function normalizeGraphNodes(nodes: any[]): any[] {
+  return nodes.map((node) => ({
+    ...node,
+    type: normalizeEntityType(node),
+  }));
 }
 
 function normalizeNeo4jEntity(node: any): any {
@@ -596,7 +609,7 @@ export async function fetchLiveGraphData(): Promise<{ nodes: any[]; links: any[]
   // 1. Prioritize live data pushed by partner's local device agent
   if (partnerLiveCache && partnerLiveCache.nodes.length > 0) {
     return {
-      nodes: partnerLiveCache.nodes,
+      nodes: normalizeGraphNodes(partnerLiveCache.nodes),
       links: partnerLiveCache.links,
       source: "partner_device_live",
     };
@@ -612,7 +625,7 @@ export async function fetchLiveGraphData(): Promise<{ nodes: any[]; links: any[]
       const nodes = rawNodes.map((n) => ({
           id: n.id || String(n._id),
           name: n.name,
-          type: n.type || "person",
+          type: normalizeEntityType(n),
           role: n.role || "Target",
           riskLevel: n.riskLevel || "medium",
           attributes: n.attributes || {},
