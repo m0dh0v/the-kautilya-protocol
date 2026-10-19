@@ -12,6 +12,7 @@ dotenv.config();
 
 const app = express();
 const PORT = 3000;
+export default app;
 
 app.use(express.json({ limit: "10mb" }));
 
@@ -798,4 +799,6 @@ async function startServer() {
   });
 }
 
-startServer();
+if (!process.env.VERCEL) {
+  startServer();
+}

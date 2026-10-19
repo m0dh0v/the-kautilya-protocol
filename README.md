@@ -84,3 +84,30 @@ Sessions last 8 hours (`SESSION_TTL_SECONDS` in `lib/session.ts` and the
 matching `maxAge` in `login/route.ts` — keep both in sync if you change it).
 Wire a "log out" button to `POST /api/auth/logout` to clear the cookie
 immediately.
+
+## Reset a password in this repository
+
+This repository runs an Express/Vite server. To change one existing account's
+password, run the following from the project root in an interactive terminal:
+
+```sh
+node scripts/set-user-password.mjs MP@4044
+```
+
+The script prompts for the new password twice without displaying it and
+updates only that account's scrypt hash in `data/users.json`. Restart the
+server afterward because the user list is cached in memory. Do not send or
+commit the password itself.
+
+## Deploy this Vite + Express app to Vercel
+
+Vercel builds the Vite frontend and serves the Express API through
+`api/index.ts`. `vercel.json` rewrites `/api/*` requests to that function and
+includes `data/users.json` in its deployment bundle. The Express app does not
+start a separate listener when running as a Vercel function. Frontend API
+requests use relative `/api/...` paths.
+
+Configure `SESSION_SECRET` in the Vercel project's Environment Variables with
+a random value of at least 16 characters so signed login sessions remain valid
+across function restarts. Add any API and database environment variables used
+by the integrations you enable. Redeploy after changing environment variables.
