@@ -102,8 +102,9 @@ commit the password itself.
 ## Deploy this Vite + Express app to Vercel
 
 Vercel builds the Vite frontend and serves the Express API through
-`api/index.ts`. `vercel.json` rewrites `/api/*` requests to that function and
-includes `data/users.json` in its deployment bundle. The Express app does not
+`api/index.ts`. The routes in `vercel.json` send `/api/*` requests to that
+function, whose handler accepts paths with or without the `/api` prefix, and
+includes `data/users.json` in the function bundle. The Express app does not
 start a separate listener when running as a Vercel function. Frontend API
 requests use relative `/api/...` paths.
 
