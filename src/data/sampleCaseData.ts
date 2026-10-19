@@ -1,4 +1,4 @@
-import { CaseData } from "../types/intelligence";
+import type { CaseData } from "../types/intelligence.js";
 
 export const initialCaseData: CaseData = {
   caseId: "NCRB-WD-2024-092",

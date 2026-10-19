@@ -1,12 +1,11 @@
 import express from "express";
 import path from "path";
 import crypto from "crypto";
-import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
-import { checkDatabasesStatus, fetchLiveGraphData, syncAtlasToNeo4j, syncGraphToDatabases } from "./server/db";
-import { initialCaseData } from "./src/data/sampleCaseData";
-import { requireAuth, verifyCredentials, createSessionToken, getSessionUsername, SESSION_COOKIE_NAME } from "./server/auth";
+import { checkDatabasesStatus, fetchLiveGraphData, syncAtlasToNeo4j, syncGraphToDatabases } from "./server/db.js";
+import { initialCaseData } from "./src/data/sampleCaseData.js";
+import { requireAuth, verifyCredentials, createSessionToken, getSessionUsername, SESSION_COOKIE_NAME } from "./server/auth.js";
 
 dotenv.config();
 
@@ -781,6 +780,7 @@ function generateRuleBasedCopilotAnswer(question: string, graphContext: any): st
 // Vite middleware for dev / static for prod
 async function startServer() {
   if (process.env.NODE_ENV !== "production") {
+    const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
