@@ -1,5 +1,5 @@
 import type { Request, Response } from "express";
-import app from "../server";
+import app from "../server.js";
 
 function apiHandler(req: Request, res: Response) {
   const originalUrl = req.url || "/";
